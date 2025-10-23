@@ -206,3 +206,74 @@ if __name__ == "__main__":
 
     hfpso.plot_convergence()
 
+
+    #Load dorothea 
+    X_train = load_sparse_data("dorothea_train.data", n_features=100000)
+    y_train = load_labels("dorothea_train.labels")
+
+    X_valid = load_sparse_data("dorothea_valid.data", n_features=100000)
+    y_valid = load_labels("dorothea_valid.labels")
+
+    print("Starting HFPSO on Dorothea Training Data...")
+    hfpso = HybridFireflyParticleSwarmOptimization(n_particles=10, max_iterations=50)
+    hfpso.fit(X_train, y_train, X_valid, y_valid)
+
+    selected_features = hfpso.get_selected_features()
+    print(f"\nSelected Features ({len(selected_features)}): {selected_features}")
+
+    # Evaluate metrics on validation set
+    X_valid_selected = X_valid[:, selected_features]
+    X_train_selected = X_train[:, selected_features]
+
+    scaler = StandardScaler()
+    X_train_selected = scaler.fit_transform(X_train_selected)
+    X_valid_selected = scaler.transform(X_valid_selected)
+
+    knn = KNeighborsClassifier(n_neighbors=3)
+    knn.fit(X_train_selected, y_train)
+    y_valid_pred = knn.predict(X_valid_selected)
+
+    print("\n--- Validation Set Performance ---")
+    print("Accuracy:", accuracy_score(y_valid, y_valid_pred))
+    print("Precision:", precision_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
+    print("Recall:", recall_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
+    print("F1-Score:", f1_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
+
+    hfpso.plot_convergence()
+    
+    #Load Madelon
+    df = pd.read_csv("mdlon.csv")
+    X_train = df.iloc[:1600, :-1].values
+    y_train = df.iloc[:1600, -1].values
+    y_train = np.where(y_train == -1, 0, 1)
+
+    X_valid = df.iloc[1600: , :-1].values
+    y_valid = df.iloc[1600: , -1].values
+    y_valid = np.where(y_valid == -1, 0, 1)
+
+    print("Starting HFPSO on Madelon Training Data...")
+    hfpso = HybridFireflyParticleSwarmOptimization(n_particles=10, max_iterations=50)
+    hfpso.fit(X_train, y_train, X_valid, y_valid)
+
+    selected_features = hfpso.get_selected_features()
+    print(f"\nSelected Features ({len(selected_features)}): {selected_features}")
+
+    # Evaluate metrics on validation set
+    X_valid_selected = X_valid[:, selected_features]
+    X_train_selected = X_train[:, selected_features]
+
+    scaler = StandardScaler()
+    X_train_selected = scaler.fit_transform(X_train_selected)
+    X_valid_selected = scaler.transform(X_valid_selected)
+
+    knn = KNeighborsClassifier(n_neighbors=3)
+    knn.fit(X_train_selected, y_train)
+    y_valid_pred = knn.predict(X_valid_selected)
+
+    print("\n--- Validation Set Performance ---")
+    print("Accuracy:", accuracy_score(y_valid, y_valid_pred))
+    print("Precision:", precision_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
+    print("Recall:", recall_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
+    print("F1-Score:", f1_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
+
+    hfpso.plot_convergence()
