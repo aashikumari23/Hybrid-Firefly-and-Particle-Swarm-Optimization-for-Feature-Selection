@@ -11,7 +11,24 @@ import numpy as np
 
 warnings.filterwarnings('ignore')
 
+def load_sparse_data(filename, n_features=100000):
+    X = np.zeros((0, n_features), dtype=np.float32)
+    rows = []
+    with open(filename, 'r') as f:
+        for line in f:
+            row = np.zeros(n_features, dtype=np.float32)
+            parts = line.strip().split()
+            for item in parts:
+                if ':' in item:
+                    idx, val = item.split(':')
+                    row[int(idx) - 1] = float(val)
+            rows.append(row)
+    X = np.vstack(rows)
+    return X
 
+def load_labels(filename):
+    y = pd.read_csv(filename, header=None).values.ravel()
+    return np.where(y == -1, 0, 1)
 class HybridFireflyParticleSwarmOptimization:
     """Hybrid Firefly Particle Swarm Optimization Algorithm for Feature Selection"""
 
@@ -199,3 +216,4 @@ if __name__ == "__main__":
     print("F1-Score:", f1_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
 
     hfpso.plot_convergence()
+
