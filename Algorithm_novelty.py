@@ -60,6 +60,9 @@ class HybridFireflyParticleSwarmOptimization:
         self.y_train = None
         self.n_features = None
 
+        self.previous_fitness = None    #
+        self.global_previous_fitness = None #
+
     def _initialize_population(self):
         feature_weights = mutual_info_classif(X_train, y_train)
         feature_weights = feature_weights / feature_weights.max()
@@ -73,6 +76,13 @@ class HybridFireflyParticleSwarmOptimization:
         self.global_best_position = None
         self.global_best_score = np.inf
 
+        self.previous_fitness = np.zeros((self.n_particles))    #
+        self.personal_worst_positions = self.positions.copy()    #
+        self.personal_worst_scores = np.full(self.n_particles, np.inf)   #
+        self.global_previous_fitness = np.inf #
+        self.global_worst_score = 0 #
+        self.global_worst_position = None   #
+
     def _binarize_position(self, position, feature_weights=None):
         binary_position = (position > 0.5).astype(int)
         if np.sum(binary_position) == 0:
@@ -84,17 +94,52 @@ class HybridFireflyParticleSwarmOptimization:
         return binary_position
 
 
-    def _fitness_function(self, binary_position, X_val, y_val):
+    def _fitness_function(self, position, X_val, y_val):
+        binary_position = self._binarize_position(position)
         selected_features = np.where(binary_position == 1)[0]
         if len(selected_features) == 0:
             return 1.0
         X_train_selected = self.X_train[:, selected_features]
         X_val_selected = X_val[:, selected_features]
+
         knn = KNeighborsClassifier(n_neighbors=3)
         knn.fit(X_train_selected, self.y_train)
         y_pred = knn.predict(X_val_selected)
         accuracy = accuracy_score(y_val, y_pred)
         return 1 - accuracy
+
+    # def _fitness_function(self, position, X_val, y_val):
+    #     binary_position = self._binarize_position(position)
+    #     selected_features = np.where(binary_position == 1)[0]
+    #     non_selected_features = np.where(binary_position == 0)[0]
+    #     if len(selected_features) == 0:
+    #         return 1.0
+    #     X_train_ = self.X_train[:, :].copy()
+    #     X_val_ = X_val[:, :].copy()
+    #     for i in range(len(position)):
+    #         X_train_[:,i]=position[i]*X_train_[:,i]
+    #         X_val_[:,i]=position[i]*X_val_[:,i]
+
+    #     X_train_selected=X_train_[:,selected_features]
+    #     X_val_selected=X_val_[:,selected_features]
+    #     # print(len(X_train_selected))
+
+    #     pca = PCA(n_components=50)
+    #     X_pca = pca.fit_transform(X_train_[:,non_selected_features])
+    #     X_train_selected = np.concat([X_train_selected,X_pca],axis=1)
+
+    #     X_pca = pca.fit_transform(X_val_[:,non_selected_features])
+    #     X_val_selected = np.concat([X_val_selected,X_pca],axis=1)
+    #     # print(len(X_train_selected),"\n\n\n")
+
+    #     # X_train_selected = X_train_selected[:, selected_features]
+    #     # X_val_selected = X_val_selected[:, selected_features]
+    #     #  X_val_selected = X_val[:, selected_features]
+    #     knn = KNeighborsClassifier(n_neighbors=3)
+    #     knn.fit(X_train_selected, self.y_train)
+    #     y_pred = knn.predict(X_val_selected)
+    #     accuracy = accuracy_score(y_val, y_pred)
+    #     return 1 - accuracy
 
     def _calculate_distance(self, pos1, pos2):
         return np.linalg.norm(pos1 - pos2)
@@ -124,8 +169,7 @@ class HybridFireflyParticleSwarmOptimization:
         return new_position
 
     def _hybrid_update(self, i, iteration, X_val, y_val):
-        current_binary = self._binarize_position(self.positions[i])
-        current_fitness = self._fitness_function(current_binary, X_val, y_val)
+        current_fitness = self._fitness_function(self.positions[i], X_val, y_val)
 
         if current_fitness <= self.global_best_score:
             if self.global_best_position is not None:
@@ -139,6 +183,40 @@ class HybridFireflyParticleSwarmOptimization:
 
         return np.clip(new_position, 0, 1)
 
+    def _delta_update(self, i, iteration, X_val, y_val):
+        current_fitness = self._fitness_function(self.positions[i], X_val, y_val)
+
+        if self.previous_fitness[i] - current_fitness > self.global_previous_fitness - self.global_best_score:
+            if self.global_best_position is not None:
+                pos_temp = self.positions[i].copy()
+                new_position = self._firefly_update(i, iteration)
+                self.velocities[i] = new_position - pos_temp
+            else:
+                new_position = self.positions[i]
+        else:
+            if self.global_best_position is not None:
+                new_position = self._pso_update(i, iteration)
+            else:
+                new_position = self.positions[i]
+
+        self.previous_fitness[i] = current_fitness
+
+        #
+
+        if(self.global_best_position is not None and (self._binarize_position(self.positions[i])==self._binarize_position(self.global_best_position)).all()):
+            self.positions[i] = np.random.uniform(0, 1, (self.n_features))
+            new_position=self.positions[i]
+            current_fitness=self._fitness_function(self.positions[i],X_val,y_val)
+            self.previous_fitness[i]=1.0
+            self.personal_best_scores[i]=current_fitness
+            self.personal_worst_scores[i]=current_fitness
+            self.personal_best_positions[i]=self.positions[i]
+            self.personal_worst_positions[i]=self.positions[i]
+            self.velocities[i] = np.random.uniform(-1, 1, (self.n_features))
+        #
+
+        return np.clip(new_position, 0, 1)
+
     def fit(self, X_train, y_train, X_val, y_val):
         self.X_train = X_train
         self.y_train = y_train
@@ -147,7 +225,7 @@ class HybridFireflyParticleSwarmOptimization:
 
         for iteration in range(self.max_iterations):
             for i in range(self.n_particles):
-                self.positions[i] = self._hybrid_update(i, iteration, X_val, y_val)
+                self.positions[i] = self._delta_update(i, iteration, X_val, y_val)
                 binary_position = self._binarize_position(self.positions[i])
                 fitness = self._fitness_function(binary_position, X_val, y_val)
 
@@ -155,9 +233,19 @@ class HybridFireflyParticleSwarmOptimization:
                     self.personal_best_scores[i] = fitness
                     self.personal_best_positions[i] = self.positions[i].copy()
 
+                if fitness > self.personal_worst_scores[i]:
+                    self.personal_worst_scores[i] = fitness
+                    self.personal_worst_positions[i] = self.positions[i].copy()
+
                 if fitness < self.global_best_score:
                     self.global_best_score = fitness
                     self.global_best_position = self.positions[i].copy()
+                
+                    self.global_previous_fitness = self.previous_fitness[i]
+                
+                if fitness > self.global_worst_score:
+                    self.global_worst_score=fitness
+                    self.global_worst_position=self.positions[i].copy()
 
             self.fitness_history.append(self.global_best_score)
             if iteration % 10 == 0:
