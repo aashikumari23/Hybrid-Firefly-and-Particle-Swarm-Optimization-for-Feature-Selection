@@ -54,7 +54,8 @@ class HybridFireflyParticleSwarmOptimization:
         self.personal_best_scores = None
         self.global_best_position = None
         self.global_best_score = None
-        self.fitness_history = []
+        self.best_fitness_history = []
+        self.avg_fitness_history = []   #
 
         self.X_train = None
         self.y_train = None
@@ -82,6 +83,7 @@ class HybridFireflyParticleSwarmOptimization:
         self.global_previous_fitness = np.inf #
         self.global_worst_score = 0 #
         self.global_worst_position = None   #
+        self.temperatures = np.ones((self.n_particles))
 
     def _binarize_position(self, position, feature_weights=None):
         binary_position = (position > 0.5).astype(int)
@@ -94,9 +96,9 @@ class HybridFireflyParticleSwarmOptimization:
         return binary_position
 
 
-    def _fitness_function(self, position, X_val, y_val):
-        binary_position = self._binarize_position(position)
-        selected_features = np.where(binary_position == 1)[0]
+    def _fitness_function(self, position, k, X_val, y_val):
+        # binary_position = self._binarize_position(position)
+        selected_features = np.argpartition(position, -k)[-k:]
         if len(selected_features) == 0:
             return 1.0
         X_train_selected = self.X_train[:, selected_features]
@@ -149,9 +151,9 @@ class HybridFireflyParticleSwarmOptimization:
 
     def _firefly_update(self, i, iteration):
         distance = self._calculate_distance(self.positions[i], self.global_best_position)
-        attractiveness = self.beta0 * np.exp(-self.gamma * distance ** 2)
+        attractiveness = self.temperatures[i] * self.beta0 * np.exp(-self.gamma * distance ** 2)
         random_term = self.alpha * np.random.normal(0, 1, self.n_features)
-        new_position = (self.positions[i] +
+        new_position = ((1-self.temperatures[i]) * self.positions[i] +
                         attractiveness * (self.global_best_position - self.positions[i]) +
                         random_term)
         return new_position
@@ -159,17 +161,22 @@ class HybridFireflyParticleSwarmOptimization:
     def _pso_update(self, i, iteration):
         w = self._update_inertia_weight(iteration)
         r1, r2 = np.random.random(2)
-        cognitive_component = (self.cognitive_factor * r1 *
+        cognitive_component = (1-self.temperatures[i]) * (self.cognitive_factor * r1 *
                                (self.personal_best_positions[i] - self.positions[i]))
-        social_component = (self.social_factor * r2 *
+        social_component = self.temperatures[i] * (self.social_factor * r2 *
                             (self.global_best_position - self.positions[i]))
         self.velocities[i] = (w * self.velocities[i] +
                               cognitive_component + social_component)
         new_position = self.positions[i] + self.velocities[i]
         return new_position
+    
+    def _temp_update(self, i, iteration, factor=0.05):
+        temperature = self.temperatures[i]
+        temperature = temperature - 0.1 * temperature
+        return temperature
 
-    def _hybrid_update(self, i, iteration, X_val, y_val):
-        current_fitness = self._fitness_function(self.positions[i], X_val, y_val)
+    def _hybrid_update(self, i, k, iteration, X_val, y_val):
+        current_fitness = self._fitness_function(self.positions[i],k, X_val, y_val)
 
         if current_fitness <= self.global_best_score:
             if self.global_best_position is not None:
@@ -183,8 +190,8 @@ class HybridFireflyParticleSwarmOptimization:
 
         return np.clip(new_position, 0, 1)
 
-    def _delta_update(self, i, iteration, X_val, y_val):
-        current_fitness = self._fitness_function(self.positions[i], X_val, y_val)
+    def _delta_update(self, i, k, iteration, X_val, y_val):
+        current_fitness = self._fitness_function(self.positions[i], k, X_val, y_val)
 
         if self.previous_fitness[i] - current_fitness > self.global_previous_fitness - self.global_best_score:
             if self.global_best_position is not None:
@@ -200,34 +207,36 @@ class HybridFireflyParticleSwarmOptimization:
                 new_position = self.positions[i]
 
         self.previous_fitness[i] = current_fitness
-
+        self.temperatures[i]=self._temp_update(i, iteration)
         #
 
         if(self.global_best_position is not None and (self._binarize_position(self.positions[i])==self._binarize_position(self.global_best_position)).all()):
             self.positions[i] = np.random.uniform(0, 1, (self.n_features))
             new_position=self.positions[i]
-            current_fitness=self._fitness_function(self.positions[i],X_val,y_val)
+            current_fitness=self._fitness_function(self.positions[i], k,X_val,y_val)
             self.previous_fitness[i]=1.0
             self.personal_best_scores[i]=current_fitness
             self.personal_worst_scores[i]=current_fitness
             self.personal_best_positions[i]=self.positions[i]
             self.personal_worst_positions[i]=self.positions[i]
             self.velocities[i] = np.random.uniform(-1, 1, (self.n_features))
+            self.temperatures[i]=1.0
         #
 
         return np.clip(new_position, 0, 1)
 
-    def fit(self, X_train, y_train, X_val, y_val):
+    def fit(self, k, X_train, y_train, X_val, y_val):
         self.X_train = X_train
         self.y_train = y_train
         self.n_features = X_train.shape[1]
         self._initialize_population()
 
         for iteration in range(self.max_iterations):
+            avg_fitness=0
             for i in range(self.n_particles):
-                self.positions[i] = self._delta_update(i, iteration, X_val, y_val)
+                self.positions[i] = self._delta_update(i, iteration, k, X_val, y_val)
                 binary_position = self._binarize_position(self.positions[i])
-                fitness = self._fitness_function(binary_position, X_val, y_val)
+                fitness = self._fitness_function(self.positions[i], k, X_val, y_val)
 
                 if fitness < self.personal_best_scores[i]:
                     self.personal_best_scores[i] = fitness
@@ -246,13 +255,16 @@ class HybridFireflyParticleSwarmOptimization:
                 if fitness > self.global_worst_score:
                     self.global_worst_score=fitness
                     self.global_worst_position=self.positions[i].copy()
+                
+                avg_fitness+=fitness
 
-            self.fitness_history.append(self.global_best_score)
+            self.avg_fitness_history.append(avg_fitness/self.n_particles)
+            self.best_fitness_history.append(self.global_best_score)
             if iteration % 10 == 0:
                 selected_features = np.sum(self._binarize_position(self.global_best_position))
                 accuracy = 1 - self.global_best_score
                 print(f"KNN: Iteration {iteration}: Best Accuracy = {accuracy:.4f}, "
-                      f"Features Selected = {selected_features}")
+                        f"Features Selected = {selected_features}")
 
     def get_selected_features(self):
         binary_position = self._binarize_position(self.global_best_position)
@@ -260,16 +272,26 @@ class HybridFireflyParticleSwarmOptimization:
 
     def plot_convergence(self):
         plt.figure(figsize=(10, 6))
-        plt.plot(range(len(self.fitness_history)),
-                 [1 - f for f in self.fitness_history])
+        plt.plot(range(len(self.best_fitness_history)),
+                 [1 - f for f in self.best_fitness_history])
         plt.xlabel('Iteration')
         plt.ylabel('Best Accuracy')
         plt.title('HFPSO Convergence Curve')
         plt.grid(True)
         plt.show()
 
+        plt.figure(figsize=(10, 6))
+        plt.plot(range(len(self.avg_fitness_history)),
+                 [1 - f for f in self.avg_fitness_history])
+        plt.xlabel('Iteration')
+        plt.ylabel('Average Accuracy')
+        plt.title('HFPSO Convergence Curve')
+        plt.grid(True)
+        plt.show()
+
 if __name__ == "__main__":
     # Load Arcene
+
     X_train = pd.read_csv("arcene_train.data", delim_whitespace=True, header=None).values
     y_train = pd.read_csv("arcene_train.labels", header=None).values.ravel()
     y_train = np.where(y_train == -1, 0, 1)
@@ -278,9 +300,11 @@ if __name__ == "__main__":
     y_valid = pd.read_csv("arcene_valid.labels", header=None).values.ravel()
     y_valid = np.where(y_valid == -1, 0, 1)
 
+
+    k=int(len(X_train[1])/10)
     print("Starting HFPSO on Arcene Training Data...")
-    hfpso = HybridFireflyParticleSwarmOptimization(n_particles=10, max_iterations=50)
-    hfpso.fit(X_train, y_train, X_valid, y_valid)
+    hfpso = HybridFireflyParticleSwarmOptimization(n_particles=50, max_iterations=50)
+    hfpso.fit(k, X_train, y_train, X_valid, y_valid)
 
     selected_features = hfpso.get_selected_features()
     print(f"\nSelected Features ({len(selected_features)}): {selected_features}")
@@ -307,38 +331,40 @@ if __name__ == "__main__":
 
 
     #Load dorothea 
-    X_train = load_sparse_data("dorothea_train.data", n_features=100000)
-    y_train = load_labels("dorothea_train.labels")
+    # X_train = load_sparse_data("dorothea_train.data", n_features=100000)
+    # y_train = load_labels("dorothea_train.labels")
 
-    X_valid = load_sparse_data("dorothea_valid.data", n_features=100000)
-    y_valid = load_labels("dorothea_valid.labels")
+    # X_valid = load_sparse_data("dorothea_valid.data", n_features=100000)
+    # y_valid = load_labels("dorothea_valid.labels")
 
-    print("Starting HFPSO on Dorothea Training Data...")
-    hfpso = HybridFireflyParticleSwarmOptimization(n_particles=10, max_iterations=50)
-    hfpso.fit(X_train, y_train, X_valid, y_valid)
 
-    selected_features = hfpso.get_selected_features()
-    print(f"\nSelected Features ({len(selected_features)}): {selected_features}")
+    # k=int(len(X_train[1])/10)
+    # print("Starting HFPSO on Dorothea Training Data...")
+    # hfpso = HybridFireflyParticleSwarmOptimization(n_particles=10, max_iterations=50)
+    # hfpso.fit(k, X_train, y_train, X_valid, y_valid)
 
-    # Evaluate metrics on validation set
-    X_valid_selected = X_valid[:, selected_features]
-    X_train_selected = X_train[:, selected_features]
+    # selected_features = hfpso.get_selected_features()
+    # print(f"\nSelected Features ({len(selected_features)}): {selected_features}")
 
-    scaler = StandardScaler()
-    X_train_selected = scaler.fit_transform(X_train_selected)
-    X_valid_selected = scaler.transform(X_valid_selected)
+    # # Evaluate metrics on validation set
+    # X_valid_selected = X_valid[:, selected_features]
+    # X_train_selected = X_train[:, selected_features]
 
-    knn = KNeighborsClassifier(n_neighbors=3)
-    knn.fit(X_train_selected, y_train)
-    y_valid_pred = knn.predict(X_valid_selected)
+    # scaler = StandardScaler()
+    # X_train_selected = scaler.fit_transform(X_train_selected)
+    # X_valid_selected = scaler.transform(X_valid_selected)
 
-    print("\n--- Validation Set Performance ---")
-    print("Accuracy:", accuracy_score(y_valid, y_valid_pred))
-    print("Precision:", precision_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
-    print("Recall:", recall_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
-    print("F1-Score:", f1_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
+    # knn = KNeighborsClassifier(n_neighbors=3)
+    # knn.fit(X_train_selected, y_train)
+    # y_valid_pred = knn.predict(X_valid_selected)
 
-    hfpso.plot_convergence()
+    # print("\n--- Validation Set Performance ---")
+    # print("Accuracy:", accuracy_score(y_valid, y_valid_pred))
+    # print("Precision:", precision_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
+    # print("Recall:", recall_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
+    # print("F1-Score:", f1_score(y_valid, y_valid_pred, average='weighted', zero_division=0))
+
+    # hfpso.plot_convergence()
     
     #Load Madelon
     df = pd.read_csv("mdlon.csv")
@@ -350,9 +376,11 @@ if __name__ == "__main__":
     y_valid = df.iloc[1600: , -1].values
     y_valid = np.where(y_valid == -1, 0, 1)
 
+
+    k=int(len(X_train[1])/10)
     print("Starting HFPSO on Madelon Training Data...")
     hfpso = HybridFireflyParticleSwarmOptimization(n_particles=10, max_iterations=50)
-    hfpso.fit(X_train, y_train, X_valid, y_valid)
+    hfpso.fit(k, X_train, y_train, X_valid, y_valid)
 
     selected_features = hfpso.get_selected_features()
     print(f"\nSelected Features ({len(selected_features)}): {selected_features}")
