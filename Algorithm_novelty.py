@@ -152,19 +152,25 @@ class HybridFireflyParticleSwarmOptimization:
     def _firefly_update(self, i, iteration):
         distance = self._calculate_distance(self.positions[i], self.global_best_position)
         attractiveness = self.temperatures[i] * self.beta0 * np.exp(-self.gamma * distance ** 2)
+        distance = self._calculate_distance(self.positions[i], self.global_worst_position)
+        repulsiveness = self.temperatures[i] * self.beta0 * np.exp(-self.gamma * distance ** 2)
         random_term = self.alpha * np.random.normal(0, 1, self.n_features)
-        new_position = ((1-self.temperatures[i]) * self.positions[i] +
+        new_position = ((1-self.temperatures[i]) *self.positions[i] +
                         attractiveness * (self.global_best_position - self.positions[i]) +
-                        random_term)
+                        random_term #-
+                        # repulsiveness * (self.global_worst_position - self.positions[i])
+                        )
         return new_position
 
     def _pso_update(self, i, iteration):
         w = self._update_inertia_weight(iteration)
-        r1, r2 = np.random.random(2)
+        r1, r2, r3, r4 = np.random.random(4)
         cognitive_component = (1-self.temperatures[i]) * (self.cognitive_factor * r1 *
-                               (self.personal_best_positions[i] - self.positions[i]))
+                               (self.personal_best_positions[i] - self.positions[i])) #- (self.cognitive_factor * r4 *
+                            #    (self.personal_worst_positions[i] - self.positions[i]))
         social_component = self.temperatures[i] * (self.social_factor * r2 *
-                            (self.global_best_position - self.positions[i]))
+                            (self.global_best_position - self.positions[i]))# - (self.social_factor * r3 *
+                            # (self.global_worst_position - self.positions[i]))
         self.velocities[i] = (w * self.velocities[i] +
                               cognitive_component + social_component)
         new_position = self.positions[i] + self.velocities[i]
